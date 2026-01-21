@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:serviceprovider/login_screen.dart';
+import 'package:serviceprovider/about_app_screen.dart';
+import 'package:serviceprovider/help_support_screen.dart';
 import 'user_edit_profile.dart'; 
 
 class ProfileScreen extends StatefulWidget {
@@ -97,7 +99,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final String username = profile['username'] ?? 'Guest User';
           final String phone = profile['phone'] ?? 'Not Provided';
           final String email = profile['email'] ?? 'Not Provided';
-          // ▼▼▼ ADDED: Fetch the address from the profile data ▼▼▼
           final String address = profile['address'] ?? 'No address provided';
           final String? profileImageUrl = profile['profileImageUrl'];
 
@@ -118,12 +119,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         icon: Icons.phone_outlined,
                         title: "Phone Number",
                         value: phone),
-                    // ▼▼▼ ADDED: A new tile to display the user's address ▼▼▼
                     _InfoTile(
                         icon: Icons.location_on_outlined,
                         title: "Address",
                         value: address),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 24),
                     _buildActionButtons(context),
                     const SizedBox(height: 40),
                   ]),
@@ -133,6 +133,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         },
       ),
+      bottomNavigationBar: null,
     );
   }
 
@@ -149,8 +150,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               backgroundColor: Colors.deepPurple,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 4,
             ),
             onPressed: () {
@@ -168,18 +168,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
               foregroundColor: Colors.redAccent,
               padding: const EdgeInsets.symmetric(vertical: 14),
               side: BorderSide(color: Colors.redAccent.withOpacity(0.5)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: _showLogoutConfirmationDialog,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'More',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: ListTile(
+              leading: const Icon(Icons.info_outline, color: Colors.deepPurple),
+              title: const Text('About ServeSphere'),
+              subtitle: const Text('Learn more about how the app works'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AboutAppScreen()),
+                );
+              },
+            ),
+          ),
+          Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: ListTile(
+              leading: const Icon(Icons.support_agent_outlined, color: Colors.deepPurple),
+              title: const Text('Help & Support'),
+              subtitle: const Text('FAQs and ways to contact support'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HelpSupportScreen()),
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 }
-
-// _ProfileHeader and _InfoTile widgets remain the same...
 
 class _ProfileHeader extends StatelessWidget {
   final String username;

@@ -15,6 +15,8 @@ import 'package:serviceprovider/customer_notifications_screen.dart';
 import 'package:serviceprovider/customer_view_service_screen.dart';
 import 'package:serviceprovider/self_fix_screen.dart';
 import 'package:serviceprovider/self_fix_chatbot_screen.dart';
+import 'package:serviceprovider/search_screen.dart';
+import 'package:serviceprovider/help_support_screen.dart';
 // Notifications screen removed from Customer Dashboard
 
 class UserDashboard extends StatefulWidget {
@@ -333,7 +335,7 @@ class _UserDashboardState extends State<UserDashboard> {
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSub;
 
-  late final List<Widget> _pages;
+  List<Widget> _pages = const [];
 
   @override
   void initState() {
@@ -370,6 +372,8 @@ class _UserDashboardState extends State<UserDashboard> {
       _pages = [
         _buildHomeWithAssistant(),
         const MyRequestsScreen(),
+        const CustomerNotificationsScreen(),
+        const ServiceSearchScreen(),
         const ProfileScreen(),
       ];
       if (mounted) setState(() => _isLoading = false);
@@ -404,7 +408,7 @@ class _UserDashboardState extends State<UserDashboard> {
   }
 
   void _onItemTapped(int index) {
-    if (index == _selectedIndex) return;
+    if (index < 0 || index >= _pages.length) return;
     setState(() {
       _selectedIndex = index;
     });
@@ -427,34 +431,96 @@ class _UserDashboardState extends State<UserDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final notificationsStream = uid == null
+        ? null
+        : FirebaseFirestore.instance
+            .collection('notifications')
+            .where('userId', isEqualTo: uid)
+            .where('isRead', isEqualTo: false)
+            .limit(100)
+            .snapshots();
+
+    // Ensure the selected index is always within the current pages range.
+    final int safeIndex = _pages.isEmpty
+        ? 0
+        : _selectedIndex.clamp(0, _pages.length - 1);
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : IndexedStack(
-              index: _selectedIndex,
+              index: safeIndex,
               children: _pages,
             ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        selectedItemColor: Colors.deepPurple,
-        unselectedItemColor: Colors.grey[600],
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_filled),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.list_alt_rounded),
-            label: 'My Requests',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profile',
-          ),
-        ],
+      bottomNavigationBar: StreamBuilder<QuerySnapshot>(
+        stream: notificationsStream,
+        builder: (context, snapshot) {
+          int unreadCount = 0;
+          if (snapshot.hasData) {
+            unreadCount = snapshot.data!.docs.length;
+          }
+
+          Widget notificationsIcon = const Icon(Icons.notifications_outlined);
+          if (unreadCount > 0) {
+            notificationsIcon = Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.notifications_outlined),
+                Positioned(
+                  right: -4,
+                  top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      unreadCount > 99 ? '99+' : unreadCount.toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return BottomNavigationBar(
+            currentIndex: safeIndex,
+            onTap: _onItemTapped,
+            selectedItemColor: Colors.deepPurple,
+            unselectedItemColor: Colors.grey[600],
+            type: BottomNavigationBarType.fixed,
+            items: [
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.home_filled),
+                label: 'Home',
+              ),
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.list_alt_rounded),
+                label: 'My Requests',
+              ),
+              BottomNavigationBarItem(
+                icon: notificationsIcon,
+                label: 'Alerts',
+              ),
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.search_outlined),
+                label: 'Search',
+              ),
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.person_outline_rounded),
+                label: 'Profile',
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -690,15 +756,19 @@ class _UserDashboardState extends State<UserDashboard> {
             title: "View All\nServices",
             icon: Icons.apps_rounded,
             color: Colors.blue,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const ViewServicesScreen())),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ViewServicesScreen()),
+            ),
           ),
           _buildDashboardCard(
             title: "Payment",
             icon: Icons.history_rounded,
             color: Colors.green,
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const PaymentHistoryScreen())),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PaymentHistoryScreen()),
+            ),
           ),
           _buildDashboardCard(
             title: "Service\nTimeline",
@@ -707,6 +777,15 @@ class _UserDashboardState extends State<UserDashboard> {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const MyRequestsScreen()),
+            ),
+          ),
+          _buildDashboardCard(
+            title: "Help &\nSupport",
+            icon: Icons.support_agent_rounded,
+            color: Colors.orange,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const HelpSupportScreen()),
             ),
           ),
         ]),

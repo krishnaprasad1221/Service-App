@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:serviceprovider/login_screen.dart';
 import 'package:serviceprovider/service_provider_edit_profile_screen.dart';
+import 'package:serviceprovider/about_app_screen.dart';
+import 'package:serviceprovider/help_support_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class ServiceProviderProfileScreen extends StatefulWidget {
@@ -144,7 +146,9 @@ class _ServiceProviderProfileScreenState
                   _InfoTile(icon: Icons.location_on, title: "Address", value: address),
                   _InfoTile(icon: Icons.work, title: "Service Field", value: serviceField),
                   _DocumentTile(documentUrl: documentUrl),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 24),
+                  _buildMoreSection(context),
+                  const SizedBox(height: 24),
                   _buildActionButtons(context),
                   const SizedBox(height: 40),
                 ]),
@@ -152,6 +156,70 @@ class _ServiceProviderProfileScreenState
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Builds additional professional info section (About, Help & Support).
+  Widget _buildMoreSection(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'More',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: ListTile(
+              leading:
+                  const Icon(Icons.info_outline, color: Colors.deepPurple),
+              title: const Text('About ServeSphere'),
+              subtitle: const Text('Learn about the platform and policies'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AboutAppScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+          Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: ListTile(
+              leading: const Icon(
+                Icons.support_agent_outlined,
+                color: Colors.deepPurple,
+              ),
+              title: const Text('Help & Support'),
+              subtitle:
+                  const Text('FAQs and ways to get technical assistance'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const HelpSupportScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -675,7 +675,7 @@ class _ServiceProviderDashboardState extends State<ServiceProviderDashboard> {
   String _username = 'Service Provider';
   String? _profileImageUrl;
 
-  late final List<Widget> _pages;
+  List<Widget> _pages = const [];
 
   @override
   void initState() {
@@ -717,6 +717,11 @@ class _ServiceProviderDashboardState extends State<ServiceProviderDashboard> {
   }
 
   void _onItemTapped(int index) {
+    // Ignore taps while pages are not ready
+    if (_pages.isEmpty) return;
+    // Guard against any out-of-range indices (e.g. after hot reload or
+    // if the items/pages count changes).
+    if (index < 0 || index >= _pages.length) return;
     setState(() => _selectedIndex = index);
   }
 
@@ -729,10 +734,15 @@ class _ServiceProviderDashboardState extends State<ServiceProviderDashboard> {
   }
 
   Widget _buildApprovedDashboard() {
+    // Ensure the selected index is always within the current pages range.
+    final int safeIndex = _pages.isEmpty
+        ? 0
+        : _selectedIndex.clamp(0, _pages.length - 1);
+
     return WillPopScope(
       onWillPop: () async {
         // If not on the first tab, go back to Dashboard tab instead of popping to auth
-        if (_selectedIndex != 0) {
+        if (safeIndex != 0) {
           setState(() => _selectedIndex = 0);
           return false;
         }
@@ -740,11 +750,11 @@ class _ServiceProviderDashboardState extends State<ServiceProviderDashboard> {
       },
       child: Scaffold(
         body: IndexedStack(
-          index: _selectedIndex,
+          index: safeIndex,
           children: _pages,
         ),
         bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _selectedIndex,
+          currentIndex: safeIndex,
           onTap: _onItemTapped,
           selectedItemColor: Colors.deepPurple,
           unselectedItemColor: Colors.grey[600],

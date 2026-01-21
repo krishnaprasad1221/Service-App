@@ -217,9 +217,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           }
           break;
         default:
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('User role not found or invalid.')),
-          );
+          // Graceful fallback: if role is missing or unexpected, treat as
+          // a regular customer to avoid showing a transient error.
+          await userRef.set({'role': 'Customer'}, SetOptions(merge: true));
+          nextScreen = const UserDashboard();
       }
 
       if (nextScreen != null && mounted) {
@@ -229,15 +230,17 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         );
       }
     } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Google sign-in failed.')),
-      );
+      // For Google sign-in we avoid showing transient error SnackBars that
+      // can briefly blink before navigation; just log in debug instead.
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('Google sign-in FirebaseAuthException: ${e.code} - ${e.message}');
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Google sign-in failed: $e')),
-      );
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('Google sign-in failed: $e');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
