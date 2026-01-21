@@ -1,0 +1,1279 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
+import 'package:serviceprovider/self_fix_screen.dart';
+import 'package:serviceprovider/repair_guide_screen.dart';
+import 'package:serviceprovider/view_services_screen.dart';
+import 'package:serviceprovider/service_search_screen.dart';
+import 'package:serviceprovider/my_requests_screen.dart';
+import 'package:serviceprovider/booking_detail_screen.dart';
+import 'package:serviceprovider/customer_view_service_screen.dart';
+
+class SelfFixChatbotScreen extends StatefulWidget {
+  const SelfFixChatbotScreen({super.key});
+
+  @override
+  State<SelfFixChatbotScreen> createState() => _SelfFixChatbotScreenState();
+}
+
+class _SelfFixChatbotScreenState extends State<SelfFixChatbotScreen> {
+  final List<_ChatMessage> _messages = [];
+  final TextEditingController _inputController = TextEditingController();
+  bool _isProcessing = false;
+  final ImagePicker _imagePicker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _addBotMessage(
+      'Hi, I am your ServeSphere assistant. You can:\n'
+      '• Describe an issue (e.g. "my AC is not cooling")\n'
+      '• Ask for a service (e.g. "need an electrician near me")\n'
+      '• Ask about your booking status (e.g. "status of my last booking")\n'
+      '• Type "self fix" for basic troubleshooting tips',
+    );
+  }
+
+  void _showServiceBasedProvidersSheet(List<QueryDocumentSnapshot> serviceDocs, String applianceLabel) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.miscellaneous_services_rounded, color: Colors.deepPurple),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Services for $applianceLabel',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: serviceDocs.length,
+                  itemBuilder: (context, index) {
+                    final doc = serviceDocs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final serviceName = (data['serviceName'] as String?) ?? 'Service';
+                    final location = (data['addressDisplay'] as String?) ?? (data['locationAddress'] as String?) ?? '';
+
+                    return ListTile(
+                      leading: const CircleAvatar(
+                        backgroundColor: Colors.deepPurple,
+                        child: Icon(Icons.build_rounded, color: Colors.white),
+                      ),
+                      title: Text(serviceName),
+                      subtitle: Text(
+                        location.isNotEmpty ? location : 'Nearby service provider',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () {
+                        Navigator.pop(context); // Close bottom sheet
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CustomerViewServiceScreen(serviceId: doc.id),
+                          ),
+                        );
+                      },
+                      trailing: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context); // Close bottom sheet
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => CustomerViewServiceScreen(serviceId: doc.id),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepPurple,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          minimumSize: const Size(0, 0),
+                        ),
+                        child: const Text('View'),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    super.dispose();
+  }
+
+  void _addUserMessage(String text) {
+    setState(() {
+      _messages.add(_ChatMessage(text: text, fromBot: false));
+    });
+  }
+
+  void _addBotMessage(String text) {
+    setState(() {
+      _messages.add(_ChatMessage(text: text, fromBot: true));
+    });
+  }
+
+  void _addImageMessage(String imagePath, {bool fromBot = false}) {
+    setState(() {
+      _messages.add(
+        _ChatMessage(
+          text: '',
+          fromBot: fromBot,
+          imagePath: imagePath,
+        ),
+      );
+    });
+  }
+
+  Future<void> _handleSend() async {
+    final raw = _inputController.text.trim();
+    if (raw.isEmpty || _isProcessing) return;
+    _inputController.clear();
+    _addUserMessage(raw);
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      await _routeIntent(raw);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _routeIntent(String text) async {
+    final lower = text.toLowerCase();
+
+    if (lower.contains('status') || lower.contains('booking') || lower.contains('request')) {
+      await _handleBookingStatusIntent(lower);
+      return;
+    }
+
+    if (lower.contains('self fix') || lower.contains('self-fix') || lower.contains('troubleshoot')) {
+      _addBotMessage('Opening SelfFix tools. You can explore quick checks and repair guides.');
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SelfFixScreen()),
+      );
+      return;
+    }
+
+    if (lower.contains('guide') || lower.contains('repair')) {
+      _addBotMessage('Opening detailed SelfFix repair guides for you.');
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const RepairGuideScreen()),
+      );
+      return;
+    }
+
+    if (lower.contains('service') || lower.contains('electrician') || lower.contains('plumb') || lower.contains('clean') || lower.contains('ac') || lower.contains('paint')) {
+      await _handleServiceDiscoveryIntent(lower);
+      return;
+    }
+
+    if (lower.contains('help') || lower.contains('how to use') || lower.contains('what can you do')) {
+      _addBotMessage(
+        'Here is what I can help you with right now:\n'
+        '• Discover services near you\n'
+        '• Suggest quick self-fix checks for basic issues\n'
+        '• Show status of your recent bookings\n'
+        '• Navigate to service list, search, and your requests timeline',
+      );
+      return;
+    }
+
+    await _handleServiceDiscoveryIntent(lower);
+  }
+
+  Future<void> _handleServiceDiscoveryIntent(String lower) async {
+    String? category;
+    if (lower.contains('plumb')) category = 'Plumbing';
+    if (lower.contains('electric')) category = 'Electrician';
+    if (lower.contains('clean')) category = 'Cleaning';
+    if (lower.contains('paint')) category = 'Painting';
+    if (lower.contains('ac') || lower.contains('air condition')) category = 'AC';
+
+    if (category == null) {
+      _addBotMessage(
+        'I can help you find services. You can type things like:\n'
+        '• "need an electrician for fan repair"\n'
+        '• "looking for plumbing help"\n'
+        'Or tap below to browse all services or search.',
+      );
+      _addBotMessage('[Action] Browse services or search to continue.');
+      return;
+    }
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('services')
+          .where('category', isEqualTo: category)
+          .limit(5)
+          .get();
+
+      if (query.docs.isEmpty) {
+        _addBotMessage('I could not find services under "$category" right now. You can still open the full services list to check.');
+        return;
+      }
+
+      final buffer = StringBuffer();
+      buffer.writeln('I found some "$category" services you might like:');
+      for (final doc in query.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final name = (data['serviceName'] as String?) ?? 'Service';
+        final location = (data['addressDisplay'] as String?) ?? (data['locationAddress'] as String?) ?? '';
+        buffer.write('- $name');
+        if (location.isNotEmpty) buffer.write(' · $location');
+        buffer.writeln();
+      }
+      buffer.writeln('You can tap below to view full details and book.');
+
+      _addBotMessage(buffer.toString());
+    } catch (e) {
+      _addBotMessage('I had trouble fetching services right now. Please try again later or open the services list from the dashboard.');
+    }
+  }
+
+  Future<void> _handleBookingStatusIntent(String lower) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _addBotMessage('You need to be logged in to see your booking status.');
+      return;
+    }
+
+    try {
+      Query query = FirebaseFirestore.instance
+          .collection('serviceRequests')
+          .where('customerId', isEqualTo: user.uid)
+          .orderBy('bookingTimestamp', descending: true)
+          .limit(1);
+
+      final snapshot = await query.get();
+      if (snapshot.docs.isEmpty) {
+        _addBotMessage('I could not find any service requests linked to your account yet.');
+        return;
+      }
+
+      final doc = snapshot.docs.first;
+      final data = doc.data() as Map<String, dynamic>;
+      final status = (data['status'] as String?) ?? 'pending';
+      final serviceName = (data['serviceName'] as String?) ?? 'Service request';
+
+      _addBotMessage('Your most recent request "$serviceName" is currently "$status". You can open "My Requests" from the dashboard to see full timeline and details.');
+    } catch (e) {
+      _addBotMessage('I could not load your booking status right now. Please try again in a moment or open My Requests directly.');
+    }
+  }
+
+  void _handleQuickActionTap(String action) {
+    if (action == 'browse_services') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ViewServicesScreen()),
+      );
+      return;
+    }
+    if (action == 'search_services') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ServiceSearchScreen()),
+      );
+      return;
+    }
+    if (action == 'my_requests') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const MyRequestsScreen()),
+      );
+      return;
+    }
+    if (action == 'self_fix') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SelfFixScreen()),
+      );
+      return;
+    }
+    if (action == 'scan_appliance') {
+      _handleApplianceScanAction();
+      return;
+    }
+  }
+
+  Future<void> _handleApplianceScanAction() async {
+    if (_isProcessing) return;
+
+    // Show option to choose camera or gallery
+    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (BuildContext context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.deepPurple),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.deepPurple),
+              title: const Text('Take a Picture'),
+              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      _addBotMessage(
+        'Let\'s identify your appliance. Please ${source == ImageSource.camera ? 'take a clear photo' : 'select an image'} showing the full appliance.',
+      );
+
+      final XFile? imageFile = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 60,
+        maxWidth: 1024,
+      );
+
+      if (imageFile == null) {
+        _addBotMessage('No image ${source == ImageSource.camera ? 'captured' : 'selected'}. You can try again anytime.');
+        return;
+      }
+
+      _addImageMessage(imageFile.path, fromBot: false);
+
+      _addBotMessage('Image ${source == ImageSource.camera ? 'captured' : 'uploaded'}. Analyzing the appliance and prioritizing providers based on success rate and experience...');
+
+      await _classifyApplianceAndSuggestProviders(imageFile);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _classifyApplianceAndSuggestProviders(XFile imageFile) async {
+    try {
+      final String applianceLabel = await _runApplianceClassification(imageFile);
+
+      if (applianceLabel.isEmpty || applianceLabel == 'Unknown Appliance') {
+        _addBotMessage(
+          'I could not confidently identify the appliance from the photo. You can try another angle, better lighting, or quickly choose the appliance type below so I can still fetch the right services.',
+        );
+        // Fallback: let the user confirm the appliance type so we can
+        // continue to the same provider/service matching flow without
+        // breaking the existing logic.
+        if (mounted) {
+          _showApplianceSelectionSheet();
+        }
+        return;
+      }
+
+      // Log the detected appliance type as a service request snapshot.
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        final userId = user?.uid ?? 'anonymous';
+
+        await FirebaseFirestore.instance.collection('service_requests').add({
+          'userId': userId,
+          'applianceType': applianceLabel,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {
+        // Ignore logging errors so main chatbot flow is not affected.
+      }
+
+      _addBotMessage('I detected that this looks like a "$applianceLabel". Let me fetch suitable service providers for you.');
+
+      await _suggestProvidersForAppliance(applianceLabel);
+    } catch (e) {
+      _addBotMessage(
+        'I had trouble analyzing the image just now. Please try again later or describe the appliance and issue in text.',
+      );
+    }
+  }
+
+  /// When ML-based classification is not confident, let the user
+  /// quickly choose the appliance type. This keeps the overall
+  /// logic the same (appliance type -> services) while ensuring
+  /// we can still route correctly for tricky images.
+  void _showApplianceSelectionSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        final appliances = <String>[
+          'Air Conditioner',
+          'Fan',
+          'Laptop',
+          'PC',
+          'Mobile Phone',
+          'Refrigerator',
+          'Washing Machine',
+        ];
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Select appliance type',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sometimes the camera cannot confidently recognize the appliance. Please pick the closest match so I can fetch suitable services.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: appliances.map((label) {
+                    return ActionChip(
+                      label: Text(label),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _addBotMessage(
+                          'Thanks! I will treat this as a "$label" and fetch suitable services for you.',
+                        );
+                        _suggestProvidersForAppliance(label);
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<String> _runApplianceClassification(XFile imageFile) async {
+    try {
+      final file = File(imageFile.path);
+      final inputImage = InputImage.fromFile(file);
+
+      // Use a lower confidence threshold so that we still see
+      // relevant labels for appliances like wall-mounted AC units
+      // even in real-world lighting.
+      final labeler = ImageLabeler(
+        options: ImageLabelerOptions(confidenceThreshold: 0.15),
+      );
+
+      final List<ImageLabel> labels = await labeler.processImage(inputImage);
+      labeler.close();
+
+      // Aggregate confidence scores per appliance type instead of
+      // returning on the first match. This lets us prefer AC over
+      // Mobile Phone when both labels appear.
+      double mobileScore = 0;
+      double laptopScore = 0;
+      double pcScore = 0;
+      double washingScore = 0;
+      double fridgeScore = 0;
+      double tvScore = 0;
+      double fanScore = 0;
+      double acScore = 0;
+
+      for (final label in labels) {
+        final text = label.label.toLowerCase();
+        final c = label.confidence;
+
+        // Mobile phone
+        // IMPORTANT: do NOT match plain "phone" because the generic labeler
+        // sometimes produces false positives on unrelated objects.
+        if (text.contains('mobile phone') ||
+            text.contains('smartphone') ||
+            text.contains('cell phone') ||
+            text.contains('cellular phone')) {
+          mobileScore = mobileScore < c ? c : mobileScore;
+        }
+
+        // Laptop
+        if (text.contains('laptop') ||
+            text.contains('notebook') ||
+            text.contains('laptop computer')) {
+          laptopScore = laptopScore < c ? c : laptopScore;
+        }
+
+        // PC / desktop
+        if (text.contains('desktop') ||
+            text.contains('personal computer') ||
+            (text.contains('pc') && !text.contains('laptop')) ||
+            (text.contains('computer') &&
+                !text.contains('laptop') &&
+                !text.contains('notebook'))) {
+          pcScore = pcScore < c ? c : pcScore;
+        }
+
+        // Washing machine
+        if (text.contains('washing machine') ||
+            text.contains('washer') ||
+            text.contains('washing')) {
+          washingScore = washingScore < c ? c : washingScore;
+        }
+
+        // Refrigerator
+        if (text.contains('refrigerator') ||
+            text.contains('fridge') ||
+            text.contains('freezer')) {
+          fridgeScore = fridgeScore < c ? c : fridgeScore;
+        }
+
+        // Television
+        if (text.contains('television') ||
+            text.contains('tv') ||
+            text.contains('monitor tv')) {
+          tvScore = tvScore < c ? c : tvScore;
+        }
+
+        // Fan types (give them a bit of weight)
+        if (text.contains('pedestal fan') ||
+            text.contains('ceiling fan') ||
+            text.contains('table fan') ||
+            text.contains('desk fan') ||
+            text.contains('standing fan') ||
+            text.contains('electric fan') ||
+            text.contains('oscillating fan') ||
+            text.contains('ventilation fan') ||
+            text.contains('exhaust fan') ||
+            text.contains('cooling fan') ||
+            text.contains('blower fan') ||
+            text.contains('fan')) {
+          fanScore = fanScore < c ? c : fanScore;
+        }
+
+        // Air conditioner (slightly favor AC over mobile when both exist)
+        if (text.contains('split ac') ||
+            text.contains('split ac indoor unit') ||
+            text.contains('air conditioner') ||
+            text.contains('air conditioning') ||
+            text.contains('ac unit') ||
+            text.contains('aircon') ||
+            text.contains('hvac') ||
+            (text.contains('ac') && !text.contains('laptop'))) {
+          acScore = acScore < c ? c : acScore;
+        }
+      }
+
+      // Choose the best-matching appliance with sensible thresholds.
+      // Prefer AC/Fan over Mobile Phone when their scores are similar.
+      if (acScore >= 0.25 && acScore + 0.05 >= mobileScore) {
+        return 'Air Conditioner';
+      }
+      if (fanScore >= 0.18 && fanScore >= acScore && fanScore >= mobileScore) {
+        return 'Fan';
+      }
+      // Only accept Mobile Phone when confidence is high; otherwise it's
+      // safer to return unknown than a wrong appliance (e.g. AC/Fan).
+      if (mobileScore >= 0.60) {
+        return 'Mobile Phone';
+      }
+      // If Mobile Phone is the only thing we saw but it's not strong enough,
+      // treat as unknown to avoid wrong routing.
+      if (mobileScore > 0 && acScore == 0 && fanScore == 0 && laptopScore == 0 && pcScore == 0 && washingScore == 0 && fridgeScore == 0 && tvScore == 0) {
+        return '';
+      }
+      // If Fan is the only appliance hinted (even weakly), prefer Fan over unknown.
+      if (fanScore > 0 && acScore == 0 && mobileScore == 0 && laptopScore == 0 && pcScore == 0 && washingScore == 0 && fridgeScore == 0 && tvScore == 0) {
+        return 'Fan';
+      }
+      if (laptopScore >= 0.3) {
+        return 'Laptop';
+      }
+      if (pcScore >= 0.3) {
+        return 'PC';
+      }
+      if (washingScore >= 0.3) {
+        return 'Washing Machine';
+      }
+      if (fridgeScore >= 0.3) {
+        return 'Refrigerator';
+      }
+      if (tvScore >= 0.3) {
+        return 'Television';
+      }
+
+      return '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<List<QueryDocumentSnapshot>> _fetchProvidersByAppliance(
+      String applianceType) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('providers')
+        .where('services', arrayContains: applianceType)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    return snapshot.docs;
+  }
+
+  Future<void> _suggestProvidersForAppliance(String applianceLabel) async {
+    final labelLower = applianceLabel.toLowerCase();
+
+    // Map detected appliance to service category
+    // This mapping should match the categories used in the services collection
+    String? mappedCategory;
+    List<String> searchKeywords = [applianceLabel.toLowerCase()];
+    
+    if (labelLower.contains('laptop')) {
+      mappedCategory = 'Laptop';
+      searchKeywords.addAll([
+        'laptop',
+        'notebook',
+        'laptop repair',
+        'laptop service',
+        'computer',
+        'electronics'
+      ]);
+    } else if (labelLower.contains('mobile') || labelLower.contains('phone')) {
+      mappedCategory = 'Mobile Phone';
+      searchKeywords.addAll([
+        'mobile',
+        'phone',
+        'smartphone',
+        'mobile repair',
+        'phone repair',
+        'electronics'
+      ]);
+    } else if (labelLower.contains('pc') || labelLower.contains('computer')) {
+      mappedCategory = 'PC';
+      // Include laptop keywords since PC and Laptop services are often the same
+      searchKeywords.addAll([
+        'pc',
+        'computer',
+        'desktop',
+        'laptop',  // Add laptop to find laptop services for PC
+        'notebook',
+        'pc repair',
+        'computer repair',
+        'laptop repair',  // Include laptop repair services
+        'laptop service',
+        'electronics'
+      ]);
+    } else if (labelLower.contains('ac') || labelLower.contains('air conditioner')) {
+      mappedCategory = 'AC';
+      searchKeywords.addAll([
+        'ac',
+        'air conditioner',
+        'air conditioning',
+        'ac repair',
+        'ac service',
+        'hvac',
+        'cooling',
+        'aircon'
+      ]);
+    } else if (labelLower.contains('fan')) {
+      mappedCategory = 'Fan';
+      searchKeywords.addAll([
+        'fan',
+        'ceiling fan',
+        'table fan',
+        'fan repair',
+        'fan service',
+        'electrician',
+        'ventilation'
+      ]);
+    } else if (labelLower.contains('fridge') || labelLower.contains('refrigerator')) {
+      mappedCategory = 'Refrigerator';
+      searchKeywords.addAll([
+        'refrigerator',
+        'fridge',
+        'refrigerator repair',
+        'appliance repair'
+      ]);
+    } else if (labelLower.contains('washing')) {
+      mappedCategory = 'Washing Machine';
+      searchKeywords.addAll([
+        'washing machine',
+        'washer',
+        'washing machine repair',
+        'appliance repair'
+      ]);
+    }
+
+    try {
+      // First, try to fetch active providers that explicitly support this
+      // appliance type from the `providers` collection.
+      final String lookupType = mappedCategory ?? applianceLabel;
+      final providerDocs = await _fetchProvidersByAppliance(lookupType);
+
+      if (providerDocs.isNotEmpty) {
+        final buffer = StringBuffer();
+        buffer.writeln('Here are some providers who can help with your "$applianceLabel":');
+
+        for (final doc in providerDocs.take(5)) {
+          final data = doc.data() as Map<String, dynamic>;
+          final name = (data['name'] as String?) ?? 'Provider';
+          buffer.writeln('- $name');
+        }
+
+        buffer.writeln('You can explore their services from the services section too.');
+        _addBotMessage(buffer.toString());
+        if (mounted) {
+          _showProvidersSheet(providerDocs.take(10).toList(), applianceLabel);
+        }
+        return;
+      }
+
+      // Fallback to services-based discovery logic
+      List<QueryDocumentSnapshot> candidates = [];
+
+      // For PC detection: Search BOTH PC and Laptop categories simultaneously
+      if (applianceLabel.toLowerCase() == 'pc') {
+        // Search for PC category services
+        final pcCategoryQuery = await FirebaseFirestore.instance
+            .collection('services')
+            .where('category', isEqualTo: 'PC')
+            .limit(20)
+            .get();
+        candidates.addAll(pcCategoryQuery.docs);
+
+        final pcCategoryNameQuery = await FirebaseFirestore.instance
+            .collection('services')
+            .where('categoryName', isEqualTo: 'PC')
+            .limit(20)
+            .get();
+        for (final doc in pcCategoryNameQuery.docs) {
+          if (!candidates.any((c) => c.id == doc.id)) {
+            candidates.add(doc);
+          }
+        }
+
+        // ALSO search for Laptop category services (PC and Laptop services are interchangeable)
+        final laptopCategoryQuery = await FirebaseFirestore.instance
+            .collection('services')
+            .where('category', isEqualTo: 'Laptop')
+            .limit(20)
+            .get();
+        for (final doc in laptopCategoryQuery.docs) {
+          if (!candidates.any((c) => c.id == doc.id)) {
+            candidates.add(doc);
+          }
+        }
+
+        final laptopCategoryNameQuery = await FirebaseFirestore.instance
+            .collection('services')
+            .where('categoryName', isEqualTo: 'Laptop')
+            .limit(20)
+            .get();
+        for (final doc in laptopCategoryNameQuery.docs) {
+          if (!candidates.any((c) => c.id == doc.id)) {
+            candidates.add(doc);
+          }
+        }
+
+        // Also search for "Laptop Service" category variations
+        final laptopServiceQuery = await FirebaseFirestore.instance
+            .collection('services')
+            .where('category', isEqualTo: 'Laptop Service')
+            .limit(20)
+            .get();
+        for (final doc in laptopServiceQuery.docs) {
+          if (!candidates.any((c) => c.id == doc.id)) {
+            candidates.add(doc);
+          }
+        }
+      } else {
+        // For other appliances, use normal category matching
+        if (mappedCategory != null) {
+          final categoryQuery = await FirebaseFirestore.instance
+              .collection('services')
+              .where('category', isEqualTo: mappedCategory)
+              .limit(20)
+              .get();
+          candidates.addAll(categoryQuery.docs);
+
+          // Also try categoryName field
+          final categoryNameQuery = await FirebaseFirestore.instance
+              .collection('services')
+              .where('categoryName', isEqualTo: mappedCategory)
+              .limit(20)
+              .get();
+          for (final doc in categoryNameQuery.docs) {
+            if (!candidates.any((c) => c.id == doc.id)) {
+              candidates.add(doc);
+            }
+          }
+        }
+      }
+
+      // If category-based search returned few or no results, do a comprehensive search
+      if (candidates.length < 5) {
+        final allServices = await FirebaseFirestore.instance
+            .collection('services')
+            .limit(100)
+            .get();
+
+        final labelLower = applianceLabel.toLowerCase();
+        final additionalCandidates = allServices.docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          
+          // Check if already in candidates
+          if (candidates.any((c) => c.id == doc.id)) return false;
+          
+          // Check service name
+          final name = (data['serviceName'] as String? ?? '').toLowerCase();
+          for (final keyword in searchKeywords) {
+            if (name.contains(keyword)) return true;
+          }
+          
+          // Check category
+          final category = (data['category'] as String? ?? '').toLowerCase();
+          final categoryName = (data['categoryName'] as String? ?? '').toLowerCase();
+          for (final keyword in searchKeywords) {
+            if (category.contains(keyword) || categoryName.contains(keyword)) return true;
+          }
+          
+          // Check subCategoryNames
+          final sub = data['subCategoryNames'];
+          if (sub is List) {
+            for (final s in sub.whereType<String>()) {
+              final subLower = s.toLowerCase();
+              for (final keyword in searchKeywords) {
+                if (subLower.contains(keyword)) return true;
+              }
+            }
+          }
+          
+          // Check description for appliance-related keywords
+          final description = (data['description'] as String? ?? '').toLowerCase();
+          for (final keyword in searchKeywords) {
+            if (description.contains(keyword)) return true;
+          }
+          
+          return false;
+        }).toList();
+        
+        candidates.addAll(additionalCandidates);
+      }
+
+      if (candidates.isEmpty) {
+        _addBotMessage(
+          'I identified the appliance as "$applianceLabel" but could not find matching services right now. You can still browse all services from the dashboard.',
+        );
+        return;
+      }
+
+      final buffer = StringBuffer();
+      buffer.writeln('Here are some services that can help with your "$applianceLabel":');
+
+      for (final doc in candidates.take(10)) {
+        final data = doc.data() as Map<String, dynamic>;
+        final name = (data['serviceName'] as String?) ?? 'Service';
+        final location = (data['addressDisplay'] as String?) ?? (data['locationAddress'] as String?) ?? '';
+        buffer.write('- $name');
+        if (location.isNotEmpty) buffer.write(' · $location');
+        buffer.writeln();
+      }
+
+      buffer.writeln('You can tap below to view full details and book a visit.');
+
+      _addBotMessage(buffer.toString());
+      if (mounted) {
+        _showServiceBasedProvidersSheet(candidates, applianceLabel);
+      }
+    } catch (e) {
+      try {
+        final fallbackLabel = applianceLabel.toLowerCase();
+        if (fallbackLabel == 'pc' || fallbackLabel.contains('computer')) {
+          List<QueryDocumentSnapshot> pcCandidates = [];
+
+          final ayzSnapshot = await FirebaseFirestore.instance
+              .collection('services')
+              .where('serviceName', isEqualTo: 'Ayz LAPS')
+              .limit(10)
+              .get();
+          pcCandidates.addAll(ayzSnapshot.docs);
+
+          final laptopCategorySnapshot = await FirebaseFirestore.instance
+              .collection('services')
+              .where('category', isEqualTo: 'Laptop')
+              .limit(20)
+              .get();
+          for (final doc in laptopCategorySnapshot.docs) {
+            if (!pcCandidates.any((c) => c.id == doc.id)) {
+              pcCandidates.add(doc);
+            }
+          }
+
+          if (pcCandidates.isNotEmpty) {
+            final buffer = StringBuffer();
+            buffer.writeln('Here are some services that can help with your "$applianceLabel":');
+
+            for (final doc in pcCandidates.take(10)) {
+              final data = doc.data() as Map<String, dynamic>;
+              final name = (data['serviceName'] as String?) ?? 'Service';
+              final location = (data['addressDisplay'] as String?) ?? (data['locationAddress'] as String?) ?? '';
+              buffer.write('- $name');
+              if (location.isNotEmpty) buffer.write(' · $location');
+              buffer.writeln();
+            }
+
+            buffer.writeln('You can tap below to view full details and book a visit.');
+
+            _addBotMessage(buffer.toString());
+            if (mounted) {
+              _showServiceBasedProvidersSheet(pcCandidates, applianceLabel);
+            }
+            return;
+          }
+        }
+      } catch (_) {}
+      
+      _addBotMessage(
+        'I found "$applianceLabel" from the image, but had trouble fetching matching services. Please try again later or use the search and browse options.',
+      );
+    }
+  }
+
+  void _showProvidersSheet(List<QueryDocumentSnapshot> providerDocs, String applianceLabel) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.handyman_rounded, color: Colors.deepPurple),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Providers for $applianceLabel',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: providerDocs.length,
+                  itemBuilder: (context, index) {
+                    final doc = providerDocs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final name = (data['name'] as String?) ?? 'Provider';
+                    final servicesField = data['services'];
+                    List<String> servicesList;
+                    if (servicesField is List) {
+                      servicesList = servicesField.whereType<String>().toList();
+                    } else {
+                      servicesList = [];
+                    }
+                    final expertise = servicesList.isNotEmpty
+                        ? 'Expert in ${servicesList.join(', ')}'
+                        : 'Appliance repair expert';
+
+                    return ListTile(
+                      leading: const CircleAvatar(
+                        backgroundColor: Colors.deepPurple,
+                        child: Icon(Icons.person, color: Colors.white),
+                      ),
+                      title: Text(name),
+                      subtitle: Text(
+                        expertise,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: ElevatedButton(
+                        onPressed: () {},
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepPurple,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          minimumSize: const Size(0, 0),
+                        ),
+                        child: const Text('Book'),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        backgroundColor: Colors.deepPurple,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('ServeSphere Assistant'),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _messages.length + 1,
+              itemBuilder: (context, index) {
+                if (index == _messages.length) {
+                  return _buildQuickActionsStrip();
+                }
+                final msg = _messages[index];
+                return Align(
+                  alignment:
+                      msg.fromBot ? Alignment.centerLeft : Alignment.centerRight,
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+                    decoration: BoxDecoration(
+                      color: msg.fromBot
+                          ? Colors.white
+                          : Colors.deepPurple.shade400,
+                      borderRadius: BorderRadius.circular(16).subtract(
+                        BorderRadius.only(
+                          bottomLeft:
+                              msg.fromBot ? const Radius.circular(0) : const Radius.circular(16),
+                          bottomRight:
+                              msg.fromBot ? const Radius.circular(16) : const Radius.circular(0),
+                        ),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.03),
+                          blurRadius: 6,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (msg.imagePath != null)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.file(
+                              File(msg.imagePath!),
+                              width: MediaQuery.of(context).size.width * 0.6,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        if (msg.imagePath != null && msg.text.isNotEmpty)
+                          const SizedBox(height: 8),
+                        if (msg.text.isNotEmpty)
+                          Text(
+                            msg.text,
+                            style: TextStyle(
+                              color: msg.fromBot ? Colors.black87 : Colors.white,
+                              fontSize: 14,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          if (_isProcessing)
+            Padding(
+              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
+              child: Row(
+                children: const [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Assistant is thinking...', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+            ),
+          _buildInputBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionsStrip() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0, bottom: 4.0),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            const SizedBox(width: 4),
+            _buildQuickChip(
+              label: 'Browse services',
+              icon: Icons.apps_rounded,
+              action: 'browse_services',
+            ),
+            _buildQuickChip(
+              label: 'Search services',
+              icon: Icons.search_rounded,
+              action: 'search_services',
+            ),
+            _buildQuickChip(
+              label: 'My requests',
+              icon: Icons.list_alt_rounded,
+              action: 'my_requests',
+            ),
+            _buildQuickChip(
+              label: 'Self-fix tips',
+              icon: Icons.settings_suggest_rounded,
+              action: 'self_fix',
+            ),
+            _buildQuickChip(
+              label: 'Identify Appliance by Camera',
+              icon: Icons.photo_camera_rounded,
+              action: 'scan_appliance',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickChip({required String label, required IconData icon, required String action}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+      child: ActionChip(
+        avatar: Icon(icon, size: 18, color: Colors.deepPurple),
+        label: Text(label),
+        onPressed: () => _handleQuickActionTap(action),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: Colors.deepPurple.shade100),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 6,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _inputController,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _handleSend(),
+                decoration: const InputDecoration(
+                  hintText: 'Describe your issue or ask a question...',
+                  border: InputBorder.none,
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.photo_camera_rounded, color: Colors.deepPurple),
+              onPressed: _isProcessing ? null : _handleApplianceScanAction,
+            ),
+            IconButton(
+              icon: const Icon(Icons.send_rounded, color: Colors.deepPurple),
+              onPressed: _handleSend,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatMessage {
+  final String text;
+  final bool fromBot;
+  final String? imagePath;
+
+  _ChatMessage({required this.text, required this.fromBot, this.imagePath});
+}
